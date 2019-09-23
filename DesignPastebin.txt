@@ -106,6 +106,11 @@ class PasteService
     response: 200/204(deleted successfully)/202(marked as deleted)
 
 [High Level Design]
+- System Workflow 
+  user (add text&save)
+  => Frontend LB => Frontend Service server (get key/shortUrl from Key Generation Service)
+  => Backend LB => Backend Service server ( get paste content by key/shortUrl in Content Storage/DB)
+  can add Cache (memcache, LRU), Sharding(range based, hash based(consistent hashing)) between Backend Server and DB
 
 [Detailed Design]
 - Storage structure
@@ -155,15 +160,9 @@ Issue: need to resolve Single Poing of Failure
   if AppServer needs more keys, get another key range
   if add new AppServer, assign new key range to it
 
-- Database Design
+- Database Tables
 1. Past Table(shortUrl, content, createdOn, expireOn, userId)   
 2. User Table(userId, name, contact)
-
-- System Workflow 
-  user (add text&save)
-  => Frontend LB => Frontend Service server (get key/shortUrl from Key Generation Service)
-  => Backend LB => Backend Service server ( get paste content by key/shortUrl in Content Storage/DB)
-  can add Cache (memcache, LRU), Sharding(range based, hash based(consistent hashing)) between Backend Server and DB
 
 [Optimization]
 如何提高响应速度？
