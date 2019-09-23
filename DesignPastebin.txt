@@ -124,7 +124,6 @@ class PasteService
 	NoSQL can auto scale up and down, e.g. Sharding,replica,etc.
   - NoSQL has eventual consistency, replication delay
 
-
   For this case
   - No transaction-> NoSQL
   - No rich query -> NoSQL
@@ -165,6 +164,33 @@ Issue: need to resolve Single Poing of Failure
   => Frontend LB => Frontend Service server (get key/shortUrl from Key Generation Service)
   => Backend LB => Backend Service server ( get paste content by key/shortUrl in Content Storage/DB)
   can add Cache (memcache, LRU), Sharding(range based, hash based(consistent hashing)) between Backend Server and DB
+
+[Optimization]
+如何提高响应速度？
+- 在网络服务器和数据库之间提高响应速度
+使用Memcached来提高响应速度。当获得long_url时，先在缓存中搜索。我们可以把90%的读请求放在缓存当中。
+- 在网络服务器和用户浏览器之间提高响应速度
+不同的地区使用不同的网络服务器和缓存服务器。所有的地区共享一个数据库用来匹配用户到最近的网络服务器（通过DNS），当他们不在缓存中的时候。
+如果我们需要多于一台的MySQL机器？
+- 问题：
+  - 缓存用完了 
+  - 越来越多的请求
+  - 越来越多的缓存丢失
+- 解决方案：
+  - 垂直切分 Vertical Sharding
+  - 水平切分 Horizontal Sharding
+  最好的方式是水平切分。当前的表结构是（id, long_url），哪列可以当作切分关键字。
+  一个简单的方法是id模块切分。
+  现在有另一个问题：如何能使多个机器共享一个全局的AUTO_INCREMENT ID？
+  两种方法：1. 多使用一个机器去维护id。2. 使用zookeeper。都很操蛋。
+  所以，我们不适用AUTO_INCREMENT ID
+  好处是将切分关键字当作short_url的第一个字节。
+  另一种方法是用统一的哈希将循环断成62份。有多少份并没有啥关系，因为可能并没有62台机器（可能有360或其他的）。每台机器都是为循环的一部分的服务负责。
+  write long_url -> hash(long_url)%62 -> put long_url to the specific machine according to hash value -> generate short_url on this machine -> return short_url
+  short_url request -> get the sharding key (first byte of the short_url) -> search in the corresponding machine based on sharding key -> return long_url
+  每当我们增加一台新机器，将最多使用的机器的一半范围放到心的机器中。
+- 更多优化
+将中文服务器放在中国，美国的服务器放在美国。使用地理信息当作切分关键字，例如，0是中国的网站，1是美国的网站。
 
 [Other Thoughts]
 - rate limiter: up to 20 pastes per user
