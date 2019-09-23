@@ -1,22 +1,5 @@
 Design Pastebin
 
-[Reference]
-- Youtube ShortUrl Design
-  https://www.youtube.com/watch?v=JQDHz72OA3c
-- Github System Design 
-  https://github.com/donnemartin/system-design-primer/blob/master/solutions/system_design/pastebin
-- Grokking System Design
-  https://www.educative.io/courses/grokking-the-system-design-interview/3jyvQ3pg6KO/preview
-
-[Other Thoughts]
-1. rate limiter: up to 20 pastes per user
-2. store content in object-storage, store meta-data in metadata-storage
-3. NoSQL/SQL:
-   1) frequent write -> SQL
-      frequent read, non-frequent write -> NoSQL
-   2) need to support second index -> SQL
-      not need to support second index -> NoSQL
-
 [Questions]
 1. how to count how many pastes created by a guest user per day?
 
@@ -37,6 +20,17 @@ Pastebin web service enable users:
 - Minimum latency to fetch user pastes.
 
 /////////
+[Reference]
+- Youtube ShortUrl Design
+  https://www.youtube.com/watch?v=fMZMm_0ZhK4&t=1s
+  https://www.youtube.com/watch?v=JQDHz72OA3c&t=5s
+- Github System Design 
+  https://github.com/donnemartin/system-design-primer/blob/master/solutions/system_design/pastebin
+- Grokking System Design
+  https://www.educative.io/courses/grokking-the-system-design-interview/3jyvQ3pg6KO/preview
+- Grandyang blog
+  https://www.cnblogs.com/grandyang/p/7675140.html
+
 [Requirements]
 - Functional:
 1. create paste: upload text -> return a unique url(guest+signed users)
@@ -68,11 +62,15 @@ Details:
 Daily Active User(DAU): 10M  (Monthly Active User(MAU): 300M users?)
 Daily Usage Per User: write=10 request, read=100 request (per day per user)
 Queries Per Second(QPS): write=10M*10/86400s=100M/100K=1K read=10M*100/100K=10K
-(1个单SSD的MySQL机器可处理100-200, Cassandra 1K-10K，memcache 100K)
 Peak QPS: write=2*QPS=2K, read=2*QPS=20K
+Note: Handle QPS ability: MySQL=100-200,Cassandra=1-10K，memcache=100K
 
 2. Storage
-Space Per Request： max 512KB, avg 1KB?
+1) short url: 29B url, 8B hashcode e.g. https://pastebin.com/JX5gEcEK
+2) create-on timestamp: 7B
+3) expire-at timestamp: 7B
+4) paste content: max 512KB, avg 1K?
+Space Per Request： avg 1KB?
 Daily Space Usage： write 100M*1KB=100GB  Monthly: 30*100GB=3TB
 
 [Service APIs]
@@ -107,11 +105,77 @@ class PasteService
   DELETE: /{short_url}
     response: 200/204(deleted successfully)/202(marked as deleted)
 
-- How to create short url?
-1. hash + encode
-   1） MD5(user ip address + timestamp) => unique 128bit hashcode
-   2） base62(MD5 hashcode) => string of a-zA-Z0-9 
-   3) first 7bits of base62 string => unique short url
+[High Level Design]
 
-2. UUID? auto increased counter?
-3. Key storage/service
+[Detailed Design]
+- Storage structure
+  SQL VS NoSQL?
+  - Need to support Transactions?
+    NoSQL does not support Transactions。
+  - Need Rich SQL Query?
+    NoSQL does not support as much Query as SQL //?
+  - Need高效开发? 大多数的网络框架对SQL的支持性非常好，意味着系统不需要太多的代码。
+  - Need AUTO_INCREMENT ID?
+    NoSQL does not support auto_increment_id，only has a globally unique Object_id
+  - Need high QPS?
+    NoSQL has high QPS (Memcached=M，MondoDB=10K，MySQL=K)
+  - Need high elasticity? (Scale up and down)
+    SQL needs developer to scale up and down,
+	NoSQL can auto scale up and down, e.g. Sharding,replica,etc.
+  - NoSQL has eventual consistency, replication delay
+
+
+  For this case
+  - No transaction-> NoSQL
+  - No rich query -> NoSQL
+  - No urgent dev -> NoSQL (not much code)
+  - Can use AUTO_INCREMENT ID -> SQL (or 
+  - QPS: Write=2K,read=20K -> SQL (not too high)
+  - No need high elasticity-> SQL
+ 
+  Summary: 
+    SQL if use auto_increment id when creating short url
+	NoSQL if use other approach when creating short url
+    NoSQL has better QPS and easy to scale
+
+- Algorithm to creaet short url
+1. Pastebin Service creates hash + encode
+   1) MD5(key="user_ip_address+timestamp") => unique hashcode(128bit base16)
+      simple but large conflicts => expensive uniqueness check otherwise db collapsion
+   2) base62(base16 MD5 hashcode) => base62(a-zA-Z0-9) hashcode
+   3) take first 8 bits of base62 hashcode => unique short url: https://pastebin.com/abcdefg
+      62^8=218Trillion (62^7=3T, 62^6=57B, 10^8=100M)
+2. SQL DB AUTO_INCREMENT ID (NoSQL dose not support)
+3. Key Generation Service (pre-generated keys)
+
+Issue: need to resolve Single Poing of Failure
+  AppServer1 -> register on zookeeper -> will use keys [1-1000](mark as used)
+  AppServer2 -> register on zookeeper -> will use keys [1001-2000](mark as used)
+  ...
+  if AppServer is down, key range no longer usable
+  if AppServer needs more keys, get another key range
+  if add new AppServer, assign new key range to it
+
+- Database Design
+1. Past Table(shortUrl, content, createdOn, expireOn, userId)   
+2. User Table(userId, name, contact)
+
+- System Workflow 
+  user (add text&save)
+  => Frontend LB => Frontend Service server (get key/shortUrl from Key Generation Service)
+  => Backend LB => Backend Service server ( get paste content by key/shortUrl in Content Storage/DB)
+  can add Cache (memcache, LRU), Sharding(range based, hash based(consistent hashing)) between Backend Server and DB
+
+[Other Thoughts]
+- rate limiter: up to 20 pastes per user
+- store content in object-storage, store meta-data in metadata-storage
+- Load Balancer
+- Caching
+- Sharding
+- Indexes
+- Messaging Queue (Kafka)
+- Hashing (Consistent Hashing)
+- LRU
+- Hadoop (HDFS)
+- Cassandra 
+- Microservices
