@@ -1,0 +1,117 @@
+Design Pastebin
+
+[Reference]
+- Youtube ShortUrl Design
+  https://www.youtube.com/watch?v=JQDHz72OA3c
+- Github System Design 
+  https://github.com/donnemartin/system-design-primer/blob/master/solutions/system_design/pastebin
+- Grokking System Design
+  https://www.educative.io/courses/grokking-the-system-design-interview/3jyvQ3pg6KO/preview
+
+[Other Thoughts]
+1. rate limiter: up to 20 pastes per user
+2. store content in object-storage, store meta-data in metadata-storage
+3. NoSQL/SQL:
+   1) frequent write -> SQL
+      frequent read, non-frequent write -> NoSQL
+   2) need to support second index -> SQL
+      not need to support second index -> NoSQL
+
+[Questions]
+1. how to count how many pastes created by a guest user per day?
+
+[Background]
+Pastebin web service enable users:
+- store plain text over the network and generate unique URLs to access the uploaded data
+- share data over the network quickly by passing the URL to other users
+
+[Functional Requirements]
+- Users should be able to upload plain text called as "Pastes".
+- Upon uploading the paste user should be provided unique url to access it.
+- Users should only be able to upload text.
+- Url's should be expired after certain period of time, if expiration time not provided by the user.
+
+[Non-Functional Requirements]
+- System should be highly reliable i.e no data loss.
+- System should be highly available i.e user should be able to access their paste most of the time.
+- Minimum latency to fetch user pastes.
+
+/////////
+[Requirements]
+- Functional:
+1. create paste: upload text -> return a unique url(guest+signed users)
+2. read   paste: enter url -> view the plain text  (guest+signed users)
+3. update paste: enter url -> edit the plain text  (signed users)
+4. delete paste: enter url -> delete the plain text(signed users)
+5. paste view analytics -> view counts by paste, by time, by title, etc 
+Details:
+   content: text, expose(public/private),expiration,title,syntax(c++/java/etc),folder(?premier)
+   format:     plain text only (no pic, audio, etc)
+   uniqueness: diff requests to create the same plain text => diff urls
+   permission: guest-user can only create/read public pastes
+               free member can create/read/update/delete public/created pastes
+               pro member can do what free member can do + use “folder”		   
+   customize:  do not support custom url
+   limit: guest-user can create up to 10 new pastes per 24 hours.
+		  free members can create up to 20 new pastes per 24 hours.
+          pro members can create up to 250 new pastes per 24 hours.
+		  guest-users/free member can create a paste up to 512KB
+		  pro members can create a paste up to 10MB
+
+- Non-Functional
+1. high reliability (no data loss)
+2. high availability(no access failure most of the time)
+3. low latency      (fast read/write, analytics no need realtime)
+
+[Capacity Modeling]
+1. Capacity
+Daily Active User(DAU): 10M  (Monthly Active User(MAU): 300M users?)
+Daily Usage Per User: write=10 request, read=100 request (per day per user)
+Queries Per Second(QPS): write=10M*10/86400s=100M/100K=1K read=10M*100/100K=10K
+(1个单SSD的MySQL机器可处理100-200, Cassandra 1K-10K，memcache 100K)
+Peak QPS: write=2*QPS=2K, read=2*QPS=20K
+
+2. Storage
+Space Per Request： max 512KB, avg 1KB?
+Daily Space Usage： write 100M*1KB=100GB  Monthly: 30*100GB=3TB
+
+[Service APIs]
+1. Core Layer (Business Logic)
+class PasteService
+- createPaste()
+  input:  string text
+  output: string url
+- readPaste()
+  input:  string url
+  output: string text
+- updatePaste()
+  input:  string url, string new_text
+  output: none  
+- deletePaste()
+  input:  string url
+  output: none
+
+2. Web Layer (REST APIs)
+- Create paste
+  POST: /pastes
+    request:{ "text": "plain_text" }
+    response: short_url in header (201)
+- Read paste
+  GET: /{short_url}
+    response: { "text": "plain_text", "url":"short_url" } （200）
+- Update paste
+  PUT/PATCH: /{short_url}
+    request:{ "text": "new_plain_text" }
+    response: 200/204(updated successfully)
+- Delete Paste
+  DELETE: /{short_url}
+    response: 200/204(deleted successfully)/202(marked as deleted)
+
+- How to create short url?
+1. hash + encode
+   1） MD5(user ip address + timestamp) => unique 128bit hashcode
+   2） base62(MD5 hashcode) => string of a-zA-Z0-9 
+   3) first 7bits of base62 string => unique short url
+
+2. UUID? auto increased counter?
+3. Key storage/service
